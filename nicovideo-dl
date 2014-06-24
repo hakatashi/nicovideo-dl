@@ -557,7 +557,7 @@ for video_url_cmdl in cmdl_args:
 		else:
 			prefix = title_string_touch(video_title)
 		prefix = re.sub( r'[\\/:\*\?"<>\|]', '_', prefix.decode('utf-8').encode('shift_jis', 'ignore') )
-		video_filename = 'video\%s-%s%s' % (prefix, video_url_id, video_extension)
+		video_filename = '%s-%s%s' % (prefix, video_url_id, video_extension)
 	
 	# Check name
 	if not video_filename.lower().endswith(video_extension):
