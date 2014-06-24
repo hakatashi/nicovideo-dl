@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 #
 # Copyright (c) 2009 Keiichiro Nagano
 # Copyright (c) 2009 Kimura Youichi
@@ -28,9 +27,9 @@
 # holders shall not be used in advertising or otherwise to promote the
 # sale, use or other dealings in this Software without prior written
 # authorization.
-#
+ 
 import getpass
-import httplib
+import http.client
 import math
 import netrc
 import optparse
@@ -40,13 +39,12 @@ import socket
 import string
 import sys
 import time
-import urllib2
-import cgi
-import codecs
+import urllib.request, urllib.error, urllib.parse
 import xml.parsers.expat
+import ssl
 
 # Global constants
-const_version = '2011.02.08'
+const_version = '2014.02.04'
 const_project_url = 'http://sourceforge.jp/projects/nicovideo-dl'
 
 const_1k = 1024
@@ -57,7 +55,7 @@ const_timeout = 120
 const_video_url_str = 'http://www.nicovideo.jp/watch/%s'
 const_video_url_re = re.compile(r'^((?:http://)?(?:\w+\.)?(?:nicovideo\.jp/(?:v/|(?:watch(?:\.php)?))?/)?(\w+))')
 const_login_url_str = 'https://secure.nicovideo.jp/secure/login?site=niconico'
-const_login_post_str = 'current_form=login&mail=%s&password=%s&login_submit=Log+In'
+const_login_post_str = 'mail_tel=%s&password=%s&login_submit=Login'
 const_url_url_param_re = re.compile(r"url[=](http[^&]*)")
 const_video_url_info_str = 'http://www.nicovideo.jp/api/getflv?v=%s&as3=1'
 const_video_title_re = re.compile(r'<title>(.*)</title>', re.M | re.I)
@@ -65,6 +63,20 @@ const_video_type_re = re.compile(r'^http://.*\.nicovideo\.jp/smile\?(.*?)=.*')
 
 const_comment_getthreadkey_url_str = 'http://flapi.nicovideo.jp/api/getthreadkey?thread=%s'
 const_comment_request_str = '<thread thread="%s" version="20061206" res_from="-1000" user_id="%s"%s/>'
+
+# SSL error workaround (ugly, don't know how to do it better)
+# Related: http://bugs.python.org/issue11220
+class HTTPSHandler(urllib.request.AbstractHTTPHandler):
+	def __init__(self, debuglevel=0, context=ssl.SSLContext(ssl.PROTOCOL_TLSv1), check_hostname=None):
+		urllib.request.AbstractHTTPHandler.__init__(self, debuglevel)
+		self._context = context
+		self._check_hostname = check_hostname
+	def https_open(self, req):
+		return self.do_open(http.client.HTTPSConnection, req,
+			context=self._context, check_hostname=self._check_hostname)
+	https_request = urllib.request.AbstractHTTPHandler.do_request_
+
+urllib.request.HTTPSHandler = HTTPSHandler
 
 # Print error message, followed by standard advice information, and then exit
 def error_advice_exit(error_text):
@@ -84,9 +96,9 @@ def error_advice_exit(error_text):
 
 # Wrapper to create custom requests with typical headers
 def request_create(url, extra_headers, post_data=None):
-	retval = urllib2.Request(url)
+	retval = urllib.request.Request(url)
 	if post_data is not None:
-		retval.add_data(post_data)
+		retval.data = post_data
 	retval.add_header('User-Agent', 'nicovideo-dl/%s (%s)' % (const_version, const_project_url))
 	retval.add_header('Accept-Charset', 'ISO-8859-1,utf-8;q=0.7,*;q=0.7')
 	retval.add_header('Accept', 'text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5')
@@ -99,7 +111,7 @@ def request_create(url, extra_headers, post_data=None):
 # Perform a request, process headers and return response
 def perform_request(url, headers=None, data=None):
 	request = request_create(url, headers, data)
-	response = urllib2.urlopen(request)
+	response = urllib.request.urlopen(request)
 	return response
 
 # Conditional print
@@ -111,22 +123,20 @@ def cond_print(str):
 
 # Title string normalization
 def title_string_norm(title):
-	title_s = unicode(title.decode('utf-8', 'ignore'))
-	for title_p in [u'‐ニコニコ動画(SP1)',
-			u'‐ニコニコ動画(夏)',
-			u'‐ニコニコ動画(秋)', # as of Oct 2008
-			u'‐ニコニコ動画(冬)', # as of 5 Dec 2008
-			u'‐ニコニコ動画(ββ)', # as of 12 Dec 2008
-			u'‐ニコニコ動画(9)', # as of 29 Oct 2009
-			u'‐ ニコニコ動画(原宿)', # as of 29 Oct 2010
+	for title_p in ['‐ニコニコ動画(SP1)',
+			'‐ニコニコ動画(夏)',
+			'‐ニコニコ動画(秋)', # as of Oct 2008
+			'‐ニコニコ動画(冬)', # as of 5 Dec 2008
+			'‐ニコニコ動画(ββ)', # as of 12 Dec 2008
+			'‐ニコニコ動画(9)', # as of 29 Oct 2009
+			'‐ ニコニコ動画(原宿)', # as of 29 Oct 2010
 			]:
-		if (title_s.endswith(title_p)):
-			title_s = title_s[:title_s.rfind(title_p)]
+		if (title.endswith(title_p)):
+			title = title[:title.rfind(title_p)]
 			break
-	title_s = title_s.replace(os.sep, u'%')
-	title_s = u'_'.join(title_s.split())
-	title_s = title_s.encode('utf-8','ignore')
-	return title_s
+	title = title.replace(os.sep, '%')
+	title = '_'.join(title.split())
+	return title
 
 # Title string minimal transformation
 def title_string_touch(title):
@@ -136,15 +146,18 @@ def title_string_touch(title):
 def download_step(return_data_flag, step_title, step_error, url, post_data=None):
 	try:
 		cond_print('%s... ' % step_title)
-		response = perform_request(url, data=post_data)
+		if post_data is None:
+			response = perform_request(url, data=post_data)
+		else:
+			response = perform_request(url, data=post_data.encode('utf-8'))
 		data = response.read()
 		cond_print('done.\n')
 		if return_data_flag:
 			return data, response
 		return None
 
-	except (urllib2.URLError, ValueError, httplib.HTTPException, TypeError, socket.error):
-		cond_print('failed.\n')
+	except (urllib.error.URLError, ValueError, http.client.HTTPException, TypeError, socket.error) as e:
+		cond_print('failed. (%s)\n' % e)
 		error_advice_exit(step_error)
 
 	except KeyboardInterrupt:
@@ -154,7 +167,7 @@ def download_step(return_data_flag, step_title, step_error, url, post_data=None)
 def extract_step(step_title, step_error, regexp, data):
 	try:
 		cond_print('%s... ' % step_title)
-		match = regexp.search(data)
+		match = regexp.search(data.decode('utf-8'))
 		
 		if match is None:
 			cond_print('failed.\n')
@@ -186,7 +199,7 @@ def optimum_k_exp(num_bytes):
 	global const_1k
 	if num_bytes == 0:
 		return 0
-	return long(math.log(num_bytes, const_1k))
+	return int(math.log(num_bytes, const_1k))
 
 # Get optimum representation of number of bytes
 def format_bytes(num_bytes):
@@ -207,7 +220,7 @@ def calc_eta(start, now, total, current):
 	if current == 0 or dif < const_epsilon:
 		return '--:--'
 	rate = float(current) / dif
-	eta = long((total - current) / rate)
+	eta = int((total - current) / rate)
 	(eta_mins, eta_secs) = divmod(eta, 60)
 	if eta_mins > 99:
 		return '--:--'
@@ -223,7 +236,7 @@ def calc_speed(start, now, bytes):
 # Download comment and save to the file
 def download_comment(cmdl_opts, video_url, video_filename, video_url_id, video_info_data):
 	def extract_param(param, key):
-		if param.has_key(key):
+		if key in param:
 			return param[key][0]
 		else:
 			error_advice_exit('cannot extract %s parameter' % key)
@@ -235,7 +248,7 @@ def download_comment(cmdl_opts, video_url, video_filename, video_url_id, video_i
 	def get_thread_info():
 		url = const_comment_getthreadkey_url_str % video_url_id
 		data = post('thread key', url)
-		info = cgi.parse_qs(data)
+		info = urllib.parse.parse_qs(data)
 		return extract_param(info, "threadkey"), extract_param(info, "force_184")
 
 	def make_request(thread_id, user_id):
@@ -278,7 +291,7 @@ def download_comment(cmdl_opts, video_url, video_filename, video_url_id, video_i
 			f.write(comment)
 			f.write('\n')
 
-	info = cgi.parse_qs(video_info_data)
+	info = urllib.parse.parse_qs(video_info_data)
 	thread_id = extract_param(info, "thread_id")
 	user_id = extract_param(info, "user_id")
 	msg_url = extract_param(info, "ms")
@@ -295,8 +308,8 @@ def download_comment(cmdl_opts, video_url, video_filename, video_url_id, video_i
 			outfile = '%s.txt' % video_filename
 
 	try:
-		f = codecs.open(outfile, 'w', 'utf-8')
-	except (IOError, OSError):
+		f = open(outfile, 'w')
+	except OSError:
 		sys.exit('Error: unable to open "%s" for writing.' % outfile)
 
 	if cmdl_opts.comment_in_xml:
@@ -371,10 +384,10 @@ if cmdl_opts.use_netrc:
 			sys.exit('Error: no authenticators for machine nicovideo.')
 		netrc_username = info[0]
 		netrc_password = info[2]
-	except IOError:
+	except OSError:
 		sys.exit('Error: unable to read .netrc file.')
-	except netrc.NetrcParseError:
-		sys.exit('Error: unable to parse .netrc file.')
+	except netrc.NetrcParseError as e:
+		sys.exit(e)
 
 if cmdl_opts.password is not None:
 	account_username = cmdl_opts.username
@@ -394,12 +407,12 @@ else:
 		account_username = netrc_username
 		account_password = netrc_password
 	elif account_username is None:
-		account_username = raw_input("Type Niconico E-mail account: ")
+		account_username = input("Type Niconico E-mail account: ")
 		account_password = getpass.getpass('Type Niconico password and press return: ')
 
 # Install cookie and proxy handlers
-urllib2.install_opener(urllib2.build_opener(urllib2.ProxyHandler()))
-urllib2.install_opener(urllib2.build_opener(urllib2.HTTPCookieProcessor()))
+urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler()))
+urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPCookieProcessor()))
 
 # Log in
 if account_username is not None:
@@ -433,8 +446,8 @@ for video_url_cmdl in cmdl_args:
 	video_url_info = const_video_url_info_str % video_url_id
 	video_info_data, response = download_step(True, 'Retrieving info data', 'unable to retrieve video webpage', video_url_info)
 	cond_print('Extracting URL "url" parameter... ')
-	video_url_url_param = cgi.parse_qs(video_info_data)
-	if (video_url_url_param.has_key("url")):
+	video_url_url_param = urllib.parse.parse_qs(video_info_data.decode('utf-8'))
+	if ("url" in video_url_url_param):
 		video_url_url_param=video_url_url_param["url"][0]
 	else:
 		error_advice_exit('cannot extract url parameter')
@@ -479,20 +492,20 @@ for video_url_cmdl in cmdl_args:
 		cond_print('Video data found at %s\n' % video_data.geturl())
 		
 		if cmdl_opts.get_title:
-			print video_title
+			print(video_title)
 		
 		if cmdl_opts.get_url:
-			print video_data.geturl()
+			print(video_data.geturl())
 		
 		if cmdl_opts.simulate or cmdl_opts.get_url:
 			continue
 		
 		try:
 			video_file = open(video_filename, 'wb')
-		except (IOError, OSError):
+		except OSError:
 			sys.exit('Error: unable to open "%s" for writing.' % video_filename)
 		try:
-			video_len = long(video_data.info()['Content-length'])
+			video_len = int(video_data.info()['Content-length'])
 			video_len_str = format_bytes(video_len)
 		except KeyError:
 			video_len = None
@@ -530,9 +543,9 @@ for video_url_cmdl in cmdl_args:
 		cond_print('done.\n')
 		cond_print('Video data saved to %s\n' % video_filename)
 	
-	except (urllib2.URLError, ValueError, httplib.HTTPException, TypeError, socket.error):
+	except (urllib.error.URLError, ValueError, http.client.HTTPException, TypeError, socket.error) as e:
 		cond_print('failed.\n')
-		error_advice_exit('unable to download video data')
+		error_advice_exit('unable to download video data (%s)' % e)
 	
 	except KeyboardInterrupt:
 		sys.exit('\n')
