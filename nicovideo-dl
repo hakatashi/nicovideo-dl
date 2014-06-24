@@ -319,83 +319,83 @@ def download_comment(cmdl_opts, video_url, video_filename, video_url_id, video_i
 
 class rtmpe_req:
 
-    def __init__(self, host, tc_url, page_url, playpath, fmst1, fmst2):
-        self.host = host
-        self.tc_url = tc_url
-        self.page_url = page_url
-        self.playpath = playpath
-        self.fmst1 = fmst1
-        self.fmst2 = fmst2
-        self.swf_url = const_swf_url
-        self.flash_ver = const_flash_ver
+	def __init__(self, host, tc_url, page_url, playpath, fmst1, fmst2):
+		self.host = host
+		self.tc_url = tc_url
+		self.page_url = page_url
+		self.playpath = playpath
+		self.fmst1 = fmst1
+		self.fmst2 = fmst2
+		self.swf_url = const_swf_url
+		self.flash_ver = const_flash_ver
 
-    def build_command(self, output, resume=False, quiet=False):
-        command = ['rtmpdump']
-        if resume: command.append('-e')
-        if quiet: command.append('-q')
-        command += ['-l', '2',
-                    '-a', 'smile',
-                    '-n', self.host,
-                    '-t', self.tc_url,
-                    '-p', self.page_url,
-                    '-w', self.swf_url,
-                    '-f', '"' + self.flash_ver + '"', 
-                    '-y', self.playpath,
-                    '-C', 'S:' + self.fmst1,
-                    '-C', 'S:' + self.fmst2,
-                    '-C', 'S:' + self.playpath,
-                    '-o', output]
-        return command
+	def build_command(self, output, resume=False, quiet=False):
+		command = ['rtmpdump']
+		if resume: command.append('-e')
+		if quiet: command.append('-q')
+		command += ['-l', '2',
+		            '-a', 'smile',
+		            '-n', self.host,
+		            '-t', self.tc_url,
+		            '-p', self.page_url,
+		            '-w', self.swf_url,
+		            '-f', '"' + self.flash_ver + '"', 
+		            '-y', self.playpath,
+		            '-C', 'S:' + self.fmst1,
+		            '-C', 'S:' + self.fmst2,
+		            '-C', 'S:' + self.playpath,
+		            '-o', output]
+		return command
 
-    def download(self, output, quiet=False):
-        command = self.build_command(output, quiet=quiet)
-        child = sp.Popen(command)
-        streamdata = child.communicate()[0]
-        rc = child.returncode
+	def download(self, output, quiet=False):
+		command = self.build_command(output, quiet=quiet)
+		child = sp.Popen(command)
+		streamdata = child.communicate()[0]
+		rc = child.returncode
 
-        while rc == 2:
-            time.sleep(3)
-            command = self.build_command(output, resume=True, quiet=quiet)
-            child = sp.Popen(command)
-            streamdata = child.communicate()[0]
-            rc = child.returncode
-        
-        return rc == 0
+		while rc == 2:
+			time.sleep(3)
+			command = self.build_command(output, resume=True, quiet=quiet)
+			child = sp.Popen(command)
+			streamdata = child.communicate()[0]
+			rc = child.returncode
+		
+		return rc == 0
 
-    def get_extension(self):
-        playpath_mo = const_rtmpe_playpath_re.match(self.playpath)
-        if playpath_mo is None:
-            sys.exit('Error: Invalid playpath')
-        video_extension = "." + playpath_mo.group(1)
-        return video_extension
+	def get_extension(self):
+		playpath_mo = const_rtmpe_playpath_re.match(self.playpath)
+		if playpath_mo is None:
+			sys.exit('Error: Invalid playpath')
+		video_extension = "." + playpath_mo.group(1)
+		return video_extension
 # end class rtmpe
 
 def build_rtmpe_req(flapi_params):
-    if not flapi_params.has_key('url') or \
-       not flapi_params.has_key('thread_id') or \
-       not flapi_params.has_key('fmst') is None:
+	if not flapi_params.has_key('url') or \
+	   not flapi_params.has_key('thread_id') or \
+	   not flapi_params.has_key('fmst') is None:
 		return None
 
-    video_url = flapi_params['url'][0]
-    video_url_mo = const_video_real_url_re.match(video_url)
-    if video_url_mo is None:
-        return None
-    host = video_url_mo.group(1)
-    app = video_url_mo.group(2)
-    playpath = video_url_mo.group(3)
+	video_url = flapi_params['url'][0]
+	video_url_mo = const_video_real_url_re.match(video_url)
+	if video_url_mo is None:
+		return None
+	host = video_url_mo.group(1)
+	app = video_url_mo.group(2)
+	playpath = video_url_mo.group(3)
 
-    fmst = flapi_params['fmst'][0]
+	fmst = flapi_params['fmst'][0]
 
-    fmsts = fmst.split(':', 1)
-    if len(fmsts) < 2:
-        sys.exit('Error: invalid fmst: ' + flapi_params['fmst'][0])
-    fmst2, fmst1 = fmsts
+	fmsts = fmst.split(':', 1)
+	if len(fmsts) < 2:
+		sys.exit('Error: invalid fmst: ' + flapi_params['fmst'][0])
+	fmst2, fmst1 = fmsts
 
-    tc_url = 'rtmpe://' + host + '/' + app
-    thread_id = flapi_params['thread_id'][0]
-    page_url = 'http://www.nicovideo.jp/watch/' + thread_id
+	tc_url = 'rtmpe://' + host + '/' + app
+	thread_id = flapi_params['thread_id'][0]
+	page_url = 'http://www.nicovideo.jp/watch/' + thread_id
 
-    return rtmpe_req(host, tc_url, page_url, playpath, fmst1, fmst2)
+	return rtmpe_req(host, tc_url, page_url, playpath, fmst1, fmst2)
 
 # Create the command line options parser and parse command line
 cmdl_usage = 'usage: %prog [options] video_url'
