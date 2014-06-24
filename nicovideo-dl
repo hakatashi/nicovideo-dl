@@ -60,7 +60,7 @@ const_login_url_str = 'https://secure.nicovideo.jp/secure/login?site=niconico'
 const_login_post_str = 'current_form=login&mail=%s&password=%s&login_submit=Log+In'
 const_url_url_param_re = re.compile(r"url[=](http[^&]*)")
 const_video_url_info_str = 'http://www.nicovideo.jp/api/getflv?v=%s&as3=1'
-const_video_title_re = re.compile(r'<title>(.*)</title>', re.M | re.I)
+const_video_title_re = re.compile(r'<span class="videoHeaderTitle">([^<]*)</span>', re.M | re.I)
 const_video_type_re = re.compile(r'^http://.*\.nicovideo\.jp/smile\?(.*?)=.*')
 
 const_comment_getthreadkey_url_str = 'http://flapi.nicovideo.jp/api/getthreadkey?thread=%s'
@@ -90,7 +90,7 @@ def request_create(url, extra_headers, post_data=None):
 	retval.add_header('User-Agent', 'nicovideo-dl/%s (%s)' % (const_version, const_project_url))
 	retval.add_header('Accept-Charset', 'ISO-8859-1,utf-8;q=0.7,*;q=0.7')
 	retval.add_header('Accept', 'text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5')
-	retval.add_header('Accept-Language', 'en-us,en;q=0.5')
+	retval.add_header('Accept-Language', 'ja;q=0.5')
 	if extra_headers is not None:
 		for header in extra_headers:
 			retval.add_header(header[0], header[1])
@@ -119,6 +119,7 @@ def title_string_norm(title):
 			u'‐ニコニコ動画(ββ)', # as of 12 Dec 2008
 			u'‐ニコニコ動画(9)', # as of 29 Oct 2009
 			u'‐ ニコニコ動画(原宿)', # as of 29 Oct 2010
+			u'‐ ニコニコ動画:Q',
 			]:
 		if (title_s.endswith(title_p)):
 			title_s = title_s[:title_s.rfind(title_p)]
@@ -426,8 +427,8 @@ for video_url_cmdl in cmdl_args:
 		video_url = const_video_url_str % video_url_id
 	
 	# Extract video title if needed
-	if cmdl_opts.use_title or cmdl_opts.use_literal or cmdl_opts.get_title:
-		video_title = extract_step('Extracting video title', 'unable to extract video title', const_video_title_re, video_webpage)
+	# if cmdl_opts.use_title or cmdl_opts.use_literal or cmdl_opts.get_title:
+	video_title = extract_step('Extracting video title', 'unable to extract video title', const_video_title_re, video_webpage)
 	
 	# Extract needed video URL parameters
 	video_url_info = const_video_url_info_str % video_url_id
@@ -461,7 +462,8 @@ for video_url_cmdl in cmdl_args:
 			prefix = title_string_norm(video_title)
 		else:
 			prefix = title_string_touch(video_title)
-		video_filename = '%s-%s%s' % (prefix, video_url_id, video_extension)
+		prefix = re.sub( r'[\\/:\*\?"<>\|]', '_', prefix.decode('utf-8').encode('shift_jis', 'ignore') )
+		video_filename = 'video\%s-%s%s' % (prefix, video_url_id, video_extension)
 	
 	# Check name
 	if not video_filename.lower().endswith(video_extension):
@@ -473,10 +475,13 @@ for video_url_cmdl in cmdl_args:
 	
 	# Retrieve video data
 	try:
+		print video_url_real
 		cond_print('Requesting video file... ')
 		video_data = perform_request(video_url_real)
 		cond_print('done.\n')
 		cond_print('Video data found at %s\n' % video_data.geturl())
+		
+		video_title = re.sub( r'[\\/:\*\?"<>\|]', '_', video_title.decode('utf-8').encode('shift_jis', 'ignore') )
 		
 		if cmdl_opts.get_title:
 			print video_title
@@ -530,9 +535,25 @@ for video_url_cmdl in cmdl_args:
 		cond_print('done.\n')
 		cond_print('Video data saved to %s\n' % video_filename)
 	
-	except (urllib2.URLError, ValueError, httplib.HTTPException, TypeError, socket.error):
+	except (urllib2.URLError):
 		cond_print('failed.\n')
-		error_advice_exit('unable to download video data')
+		error_advice_exit('urllib2.URLError: unable to download video data')
+	
+	except (ValueError):
+		cond_print('failed.\n')
+		error_advice_exit('ValueError: unable to download video data')
+	
+	except (httplib.HTTPException):
+		cond_print('failed.\n')
+		error_advice_exit('httplib.HTTPException: unable to download video data')
+	
+	except (TypeError):
+		cond_print('failed.\n')
+		error_advice_exit('TypeError: unable to download video data')
+	
+	except (socket.error):
+		cond_print('failed.\n')
+		error_advice_exit('socket.error: unable to download video data')
 	
 	except KeyboardInterrupt:
 		sys.exit('\n')
