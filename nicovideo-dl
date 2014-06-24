@@ -42,13 +42,8 @@ import sys
 import time
 import urllib2
 import cgi
-import codecs
-import xml.parsers.expat
 
 # Global constants
-const_version = '2011.02.08'
-const_project_url = 'http://sourceforge.jp/projects/nicovideo-dl'
-
 const_1k = 1024
 const_initial_block_size = 10 * const_1k
 const_epsilon = 0.0001
@@ -62,9 +57,6 @@ const_url_url_param_re = re.compile(r"url[=](http[^&]*)")
 const_video_url_info_str = 'http://www.nicovideo.jp/api/getflv?v=%s&as3=1'
 const_video_title_re = re.compile(r'<title>(.*)</title>', re.M | re.I)
 const_video_type_re = re.compile(r'^http://.*\.nicovideo\.jp/smile\?(.*?)=.*')
-
-const_comment_getthreadkey_url_str = 'http://flapi.nicovideo.jp/api/getthreadkey?thread=%s'
-const_comment_request_str = '<thread thread="%s" version="20061206" res_from="-1000" user_id="%s"%s/>'
 
 # Print error message, followed by standard advice information, and then exit
 def error_advice_exit(error_text):
@@ -87,7 +79,8 @@ def request_create(url, extra_headers, post_data=None):
 	retval = urllib2.Request(url)
 	if post_data is not None:
 		retval.add_data(post_data)
-	retval.add_header('User-Agent', 'nicovideo-dl/%s (%s)' % (const_version, const_project_url))
+	# Try to mimic Firefox, at least a little bit
+	retval.add_header('User-Agent', 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.8.1.11) Gecko/20071127 Firefox/2.0.0.11')
 	retval.add_header('Accept-Charset', 'ISO-8859-1,utf-8;q=0.7,*;q=0.7')
 	retval.add_header('Accept', 'text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5')
 	retval.add_header('Accept-Language', 'en-us,en;q=0.5')
@@ -220,97 +213,9 @@ def calc_speed(start, now, bytes):
 		return 'N/A b'
 	return format_bytes(float(bytes) / dif)
 
-# Download comment and save to the file
-def download_comment(cmdl_opts, video_url, video_filename, video_url_id, video_info_data):
-	def extract_param(param, key):
-		if param.has_key(key):
-			return param[key][0]
-		else:
-			error_advice_exit('cannot extract %s parameter' % key)
-
-	def post(name, url, post_data=None):
-		data, res = download_step(True, 'Retrieving %s' % name, 'unable to get %s' % name, url, post_data=post_data)
-		return data
-
-	def get_thread_info():
-		url = const_comment_getthreadkey_url_str % video_url_id
-		data = post('thread key', url)
-		info = cgi.parse_qs(data)
-		return extract_param(info, "threadkey"), extract_param(info, "force_184")
-
-	def make_request(thread_id, user_id):
-		options = ''
-
-		if video_url_id.isdigit():
-			options = ' threadkey="%s" force_184="%s"' % get_thread_info()
-
-		return const_comment_request_str % (thread_id, user_id, options)
-	
-	def parse_comment_xml(comment_xml):
-		comments = []
-
-		def start(name, attrs):
-			if name == 'chat':
-				comments.append([int(attrs['vpos']), None])
-
-		def text(data):
-			comments[-1][1] = data
-
-		parser = xml.parsers.expat.ParserCreate()
-		parser.StartElementHandler = start
-		parser.CharacterDataHandler = text
-		parser.Parse(comment_xml)
-
-		comments.sort()
-
-		return comments
-
-	def write_comments(comments, f):
-		f.write('comments for %s on %s\n' % (video_url, time.asctime()))
-
-		if all(vpos < 600000 for vpos, comment in comments):
-			timestamp = '%02d:%02d '
-		else:
-			timestamp = '%03d:%02d '
-
-		for vpos, comment in comments:
-			f.write(timestamp % divmod(vpos / 100, 60))
-			f.write(comment)
-			f.write('\n')
-
-	info = cgi.parse_qs(video_info_data)
-	thread_id = extract_param(info, "thread_id")
-	user_id = extract_param(info, "user_id")
-	msg_url = extract_param(info, "ms")
-
-	request_xml = make_request(thread_id, user_id)
-	comment_xml = post('comment', msg_url, post_data=request_xml)
-
-	outfile = cmdl_opts.comment_outfile
-
-	if outfile is None:
-		if cmdl_opts.comment_in_xml:
-			outfile = '%s.xml' % video_filename
-		else:
-			outfile = '%s.txt' % video_filename
-
-	try:
-		f = codecs.open(outfile, 'w', 'utf-8')
-	except (IOError, OSError):
-		sys.exit('Error: unable to open "%s" for writing.' % outfile)
-
-	if cmdl_opts.comment_in_xml:
-		f.write(comment_xml.decode('utf-8'))
-	else:
-		write_comments(parse_comment_xml(comment_xml), f)
-
-	f.close()
-
-	cond_print('comment saved to %s\n' % outfile)
-
 # Create the command line options parser and parse command line
 cmdl_usage = 'usage: %prog [options] video_url'
-cmdl_version = const_version
+cmdl_version = '2008.10.08'
 cmdl_parser = optparse.OptionParser(usage=cmdl_usage, version=cmdl_version, conflict_handler='resolve')
 cmdl_parser.add_option('-h', '--help', action='help', help='print this help text and exit')
 cmdl_parser.add_option('-v', '--version', action='version', help='print program version and exit')
@@ -324,9 +229,7 @@ cmdl_parser.add_option('-l', '--literal', action='store_true', dest='use_literal
 cmdl_parser.add_option('-n', '--netrc', action='store_true', dest='use_netrc', help='use .netrc authentication data')
 cmdl_parser.add_option('-g', '--get-url', action='store_true', dest='get_url', help='print final video URL only')
 cmdl_parser.add_option('-2', '--title-too', action='store_true', dest='get_title', help='used with -g, print title too')
-cmdl_parser.add_option('-c', '--get-comment', action='store_true', dest='get_comment', help='download comment')
-cmdl_parser.add_option('-x', '--raw-comment', action='store_true', dest='comment_in_xml', help='save comment in raw xml')
-cmdl_parser.add_option('--comment-output', dest='comment_outfile', metavar='FILE', help='output comment file name')
+cmdl_parser.add_option('-P', '--pit', action='store_true', dest='use_pit', help='use Pit for authentication')
 (cmdl_opts, cmdl_args) = cmdl_parser.parse_args()
 
 # Set socket timeout
@@ -363,6 +266,16 @@ if cmdl_opts.get_url is None and cmdl_opts.get_title is not None:
 # Get account information if any
 account_username = None
 account_password = None
+if cmdl_opts.use_pit:
+	try:
+                from pit import Pit
+                info = Pit.get('nicovideo', { 'require':{'username':'user','password':'pass'}})
+		if info is None:
+			sys.exit('Error: no authenticators for machine nicovideo.')
+		pit_username = info['username']
+		pit_password = info['password']
+        except:
+		sys.exit('Error: Pit not installed.')
 
 if cmdl_opts.use_netrc:
 	try:
@@ -393,6 +306,11 @@ else:
 			sys.exit('Error: empty username in .netrc file.')
 		account_username = netrc_username
 		account_password = netrc_password
+	elif cmdl_opts.use_pit:
+		if len(pit_username) == 0:
+			sys.exit('Error: empty username from Pit.')
+		account_username = pit_username
+		account_password = pit_password
 	elif account_username is None:
 		account_username = raw_input("Type Niconico E-mail account: ")
 		account_password = getpass.getpass('Type Niconico password and press return: ')
@@ -466,10 +384,6 @@ for video_url_cmdl in cmdl_args:
 	# Check name
 	if not video_filename.lower().endswith(video_extension):
 		sys.stderr.write('Warning: video file name does not end in %s\n' % video_extension)
-	
-	# Download and save comment
-	if cmdl_opts.get_comment:
-		download_comment(cmdl_opts, video_url, video_filename, video_url_id, video_info_data)
 	
 	# Retrieve video data
 	try:
